@@ -29,10 +29,10 @@ Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
 
 ```bash
 .venv/bin/python scripts/eval_asimov_mujoco_onnx.py --kinematic --no-viewer \
-    --motion motions/asimov_motions.pkl --clip Relaxed_walk_forward_001__A057 \
+    --motion motions/asimov_relaxed_walk.pkl --clip Relaxed_walk_forward_001__A057 \
     --record media/relaxed_walk_kinematic.mp4
 .venv/bin/python scripts/eval_asimov_mujoco_onnx.py --onnx models/locoft2_final_9800.onnx \
-    --motion motions/asimov_motions.pkl --clip Relaxed_walk_forward_001__A057 \
+    --motion motions/asimov_relaxed_walk.pkl --clip Relaxed_walk_forward_001__A057 \
     --no-viewer --max-episode 20 --record media/relaxed_walk_sonic.mp4
 ```
 
@@ -46,8 +46,8 @@ Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
 Useful variants:
 
 ```bash
-./play_relaxed_walk.sh --clip neutral_idle               # idle-stand loop (stand in place)
-./play_relaxed_walk.sh --clip impro                      # any of the 27 clips (substring match)
+./play_relaxed_walk.sh --idle                            # idle-stand loop (stand in place)
+./play_relaxed_walk.sh --clip impro                      # any of the 26 walk clips (substring match)
 ./play_relaxed_walk.sh --no-viewer --total-sim-seconds 20  # headless smoke test + metrics
 ./play_relaxed_walk.sh --show-forces                     # draw contact forces
 ./play_relaxed_walk.sh --kinematic                       # reference motion only, no physics/policy
@@ -74,7 +74,8 @@ the reference convention is broken (see the "served DOF" note in the player).
 |---|---|
 | `models/locoft2_final_9800.onnx` | Latest SONIC Asimov policy (fused g1-encoder → FSQ → decoder, single 1270-D input → 23-D action). |
 | `models/locoft2_final_config.yaml` | Resolved training config for that checkpoint (reference). |
-| `motions/asimov_motions.pkl` | 27 clips @ 30 fps, retargeted G1→Asimov: `neutral_idle_loop_001__A074` (idle stand — the natural episode-start/handoff reference), `Relaxed_walk_forward_001__A057` (+ mirror; the demo clip — the play script starts it at frame 70, after the from-rest acceleration where the hands hang forward) and the `walk_forward_relax_*` family (those open with a ~2.5 s T-pose mocap-calibration ramp — play them with `--init-frame 75`). |
+| `motions/asimov_relaxed_walk.pkl` | 26 walk clips @ 30 fps, retargeted G1→Asimov: `Relaxed_walk_forward_001__A057` (+ mirror; the demo clip — the play script starts it at frame 70, after the from-rest acceleration where the hands hang forward) and the `walk_forward_relax_*` family (those open with a ~2.5 s T-pose mocap-calibration ramp — play them with `--init-frame 75`). |
+| `motions/asimov_idle_stand.pkl` | `neutral_idle_loop_001__A074` (7.1 s @ 30 fps idle-stand loop) — the natural episode-start/handoff reference; play with `--idle`. |
 | `assets/mjcf/asimov.xml` (+ `asimov_assets/`) | Asimov v1 MuJoCo model. |
 | `scripts/eval_asimov_mujoco_onnx.py` | The player: builds observations exactly as in training, runs the ONNX at 50 Hz, PD at 200 Hz. |
 | `docs/dds_message_schema.md` | **Integration contract**: exact policy input/output layout + proposed DDS topics/IDL. |
