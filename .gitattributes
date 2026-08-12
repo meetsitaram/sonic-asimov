@@ -1,3 +1,1 @@
 media/*.mp4 filter=lfs diff=lfs merge=lfs -text
-media/*.gif filter=lfs diff=lfs merge=lfs -text
-media/*.gif !text !filter !merge !diff
