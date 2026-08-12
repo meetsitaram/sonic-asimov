@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""ONNX-driven MuJoCo evaluation for Asimov v1, with optional .pt parity check.
-
-Port of :mod:`eval_x2_mujoco_onnx` to the Asimov embodiment (23 actuated DOF,
-Menlo Research). Same CLI ergonomics: point it at a fused ONNX
-(``export_asimov_onnx.py`` output) and a motion-lib PKL and it launches a
-MuJoCo viewer with the policy tracking the clip; ``--no-viewer`` runs the
-same loop headless.
+"""ONNX-driven MuJoCo evaluation for Asimov v1 (23 actuated DOF, Menlo
+Research). Point it at the fused SONIC ONNX and a motion-lib PKL and it
+launches a MuJoCo viewer with the policy tracking the clip; ``--no-viewer``
+runs the same loop headless, ``--kinematic`` plays the reference without
+physics, ``--record`` captures either mode to mp4.
 
 The fused ONNX takes a single 1270-D vector::
 
@@ -37,15 +35,6 @@ Asimov quirks handled (see ``gear_sonic/envs/manager_env/robots/asimov.py``):
   - Elbow ``ref`` +/-45 deg is baked into the MJCF, and the PKL ``dof``
     convention == MJCF qpos, so joint values pass through untouched.
 
-Two modes:
-
-1. **ONNX-only rollout** (``--onnx FILE``): the ONNX session drives actions.
-2. **Parity check** (``--onnx FILE --compare-pt CHECKPOINT.pt``): the fused
-   PyTorch module (rebuilt from the checkpoint state dict, identical
-   architecture to the export) runs in parallel on identical observations
-   and per-step action deltas go to ``--parity-csv`` with a PASS/FAIL
-   summary against ``--parity-threshold``. The .pt action drives the sim.
-
 A tracking summary (survival seconds, mean/max joint |q - q_ref| in rad,
 mean |pelvis_z - ref_z|) is printed per episode and aggregated at exit.
 
@@ -58,17 +47,12 @@ Usage (standalone repo — after ./install.sh):
 
   Headless smoke run:
       ... --no-viewer --total-sim-seconds 20
-
-  Parity vs a .pt checkpoint (needs torch installed):
-      ... --compare-pt <checkpoint.pt> --no-viewer --total-sim-seconds 10
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
-import csv
-import sys
 import time
 from pathlib import Path
 
@@ -79,9 +63,7 @@ import numpy as np
 import onnxruntime as ort
 from scipy.spatial.transform import Rotation as Rot
 
-# Policy I/O dims (must match export_asimov_onnx.py; duplicated here so the
-# ONNX-only rollout path has NO torch dependency — export_asimov_onnx imports
-# torch at module level and is only pulled in lazily for --compare-pt).
+# Policy I/O dims (fixed by the training export — see docs/dds_message_schema.md).
 NUM_ACTIONS = 23
 TOK_DIM = 520          # 10 future frames x (23 jpos + 23 jvel + 6 ori) = 10*52
 PROP_DIM = 750         # 10-frame history x (3 angvel + 23 jpos + 23 jvel + 23 action + 3 gravity)
@@ -145,16 +127,11 @@ assert MJ_TO_IL_DOF.tolist() == [0, 3, 7, 11, 15, 19, 1, 4, 8, 12, 16, 20, 2,
                                  6, 10, 14, 18, 22, 5, 9, 13, 17, 21]
 assert (np.asarray(MJ_TO_IL_DOF)[IL_TO_MJ_DOF] == np.arange(NUM_DOFS)).all()
 
-# Hardware-characterized per-joint parameters (robots/asimov.py
-# ASIMOV_JOINT_PARAMS, from mjlab asimov_1_constant.py):
-# basename -> (kp, kd, effort_hard_clamp)
-#
-# MUST mirror ASIMOV_JOINT_PARAMS exactly — effort feeds both the torque
-# clamp AND the action scale (0.25*effort/kp), so a mismatch changes action
-# semantics vs training. 2026-07-28: efforts = SATURATION ratings (knee-bend
-# fix). Checkpoints trained BEFORE the fix (bigrun/locoft1 lineage,
-# global_step <= ~6k) used the old continuous-limit scale — pass
-# --legacy-continuous-efforts to evaluate those faithfully.
+# Hardware-characterized per-joint parameters: basename -> (kp, kd,
+# effort_hard_clamp). Efforts are the actuators' SATURATION (peak) ratings —
+# what the policy trained with. MUST match the training config exactly:
+# effort feeds both the torque clamp AND the action scale (0.25*effort/kp),
+# so a mismatch changes action semantics vs training.
 JOINT_PARAMS = {
     "hip_pitch": (150.0, 5.0, 120.0),
     "hip_roll": (150.0, 5.0, 90.0),
@@ -168,22 +145,6 @@ JOINT_PARAMS = {
     "shoulder_yaw": (96.0, 5.0, 60.0),
     "elbow": (40.0, 2.0, 36.0),
     "wrist_yaw": (40.0, 2.0, 36.0),
-}
-
-# Pre-fix (continuous) efforts for evaluating legacy checkpoints.
-JOINT_PARAMS_LEGACY = {
-    "hip_pitch": (150.0, 5.0, 40.0),
-    "hip_roll": (150.0, 5.0, 30.0),
-    "hip_yaw": (150.0, 5.0, 20.0),
-    "knee": (150.0, 5.0, 25.0),
-    "ankle_pitch": (440.0, 20.0, 40.0),
-    "ankle_roll": (440.0, 20.0, 17.0),
-    "waist_yaw": (65.0, 5.0, 40.0),
-    "shoulder_pitch": (57.0, 5.0, 30.0),
-    "shoulder_roll": (86.0, 5.0, 25.0),
-    "shoulder_yaw": (96.0, 5.0, 20.0),
-    "elbow": (40.0, 2.0, 12.0),
-    "wrist_yaw": (40.0, 2.0, 12.0),
 }
 
 # Training reset pose (ASIMOV_CFG InitialStateCfg; right side sign-mirrored).
@@ -296,6 +257,7 @@ def _build_arrays(params=None):
 KP, KD, EFFORT_LIMIT, ACTION_SCALE, DEFAULT_DOF = _build_arrays()
 
 
+
 def _soft_joint_limits():
     """0.9-soft joint limits from the MJCF, MJ order (IsaacLab
     soft_joint_pos_limit_factor=0.9: mid +/- 0.9*half). RSI joint writes are
@@ -309,14 +271,6 @@ def _soft_joint_limits():
 
 
 SOFT_JPOS_LO, SOFT_JPOS_HI = _soft_joint_limits()
-
-
-def use_legacy_efforts():
-    """Switch module-level gain arrays to pre-fix continuous-limit efforts."""
-    global KP, KD, EFFORT_LIMIT, ACTION_SCALE, DEFAULT_DOF
-    KP, KD, EFFORT_LIMIT, ACTION_SCALE, DEFAULT_DOF = _build_arrays(
-        JOINT_PARAMS_LEGACY
-    )
 
 
 # ---------- Output safety layer (deploy-style, bare minimum) ----------
@@ -459,25 +413,6 @@ class OnnxActor:
             f"input '{self.input_name}' shape={self.input_shape} -> "
             f"output '{self.output_name}' shape={self.output_shape}"
         )
-
-
-def load_pt_actor(ckpt_path: str, device: str = "cpu"):
-    """Rebuild the fused PyTorch module from the checkpoint state dict.
-
-    Torch (via export_asimov_onnx) is imported lazily so plain ONNX rollouts
-    run without torch installed.
-    """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from export_asimov_onnx import (
-        FusedAsimovWrapper, _mlp_from_state_dict, tolerant_torch_load,
-    )
-    ckpt = tolerant_torch_load(ckpt_path)
-    sd = ckpt.get("policy_state_dict") or ckpt.get("actor_model_state_dict")
-    if sd is None:
-        raise KeyError("Cannot find policy state dict in checkpoint")
-    encoder, _ = _mlp_from_state_dict(sd, "actor_module.encoders.g1.module.")
-    decoder, _ = _mlp_from_state_dict(sd, "actor_module.decoders.g1_dyn.module.")
-    return FusedAsimovWrapper(encoder, decoder).eval().to(device)
 
 
 # ---------- Motion helpers ----------
@@ -647,56 +582,6 @@ def build_tokenizer_obs(motion_data, current_time, base_quat_wxyz, motion_fps):
     return flat
 
 
-# ---------- Parity logger ----------
-class ParityLogger:
-    """Accumulates per-step PT-vs-ONNX action deltas and writes a CSV."""
-
-    def __init__(self, csv_path: Path):
-        self.csv_path = csv_path
-        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = self.csv_path.open("w", newline="")
-        self._writer = csv.writer(self._fh)
-        self._writer.writerow(
-            ["step", "sim_time", "delta_inf", "delta_l2", "delta_mean_abs",
-             "a_pt_inf", "a_onnx_inf"]
-        )
-        self.deltas_inf: list[float] = []
-        self.deltas_mean_abs: list[float] = []
-
-    def log(self, step, sim_time, a_pt, a_onnx):
-        diff = a_pt - a_onnx
-        d_inf = float(np.max(np.abs(diff)))
-        self.deltas_inf.append(d_inf)
-        self.deltas_mean_abs.append(float(np.mean(np.abs(diff))))
-        self._writer.writerow(
-            [step, f"{sim_time:.6f}", f"{d_inf:.6e}",
-             f"{float(np.linalg.norm(diff)):.6e}",
-             f"{float(np.mean(np.abs(diff))):.6e}",
-             f"{float(np.max(np.abs(a_pt))):.6e}",
-             f"{float(np.max(np.abs(a_onnx))):.6e}"]
-        )
-
-    def close(self):
-        self._fh.close()
-
-    def summary(self, threshold: float) -> tuple[bool, str]:
-        if not self.deltas_inf:
-            return False, "  No samples recorded."
-        arr = np.asarray(self.deltas_inf)
-        max_inf = float(arr.max())
-        passed = max_inf < threshold
-        lines = [
-            f"  Samples:                   {len(arr)}",
-            f"  Max  |a_pt - a_onnx|_inf:  {max_inf:.3e}",
-            f"  Mean |a_pt - a_onnx|_inf:  {float(arr.mean()):.3e}",
-            f"  p99  |a_pt - a_onnx|_inf:  {float(np.percentile(arr, 99)):.3e}",
-            f"  Threshold:                 {threshold:.3e}",
-            f"  Verdict:                   {'PASS' if passed else 'FAIL'}",
-            f"  CSV:                       {self.csv_path}",
-        ]
-        return passed, "\n".join(lines)
-
-
 # ---------- Tracking metrics ----------
 class TrackingMeter:
     """Per-episode joint/root tracking error accumulator (mpjpe-ish, in rad/m)."""
@@ -768,7 +653,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--onnx", default=None,
-                        help="Fused Asimov ONNX (export_asimov_onnx.py output). "
+                        help="Fused Asimov SONIC ONNX (models/*.onnx). "
                              "Required unless --kinematic.")
     parser.add_argument("--kinematic", action="store_true",
                         help="Kinematic reference playback: pose the robot "
@@ -801,14 +686,6 @@ def main():
                              "combining looping with a time budget truncates "
                              "whichever episode the budget lands in (reported as "
                              "'time_budget', not a fall).")
-    parser.add_argument("--compare-pt", default=None,
-                        help="Optional .pt checkpoint: run the PyTorch fused "
-                             "module in parallel on identical obs and log "
-                             "per-step deltas (the .pt action drives the sim).")
-    parser.add_argument("--parity-csv", default="logs/asimov/parity_pt_vs_onnx.csv")
-    parser.add_argument("--parity-threshold", type=float, default=1e-3,
-                        help="PASS if max |a_pt - a_onnx|_inf < this (default 1e-3).")
-    parser.add_argument("--device", default="cpu", help="Torch device for the .pt actor.")
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--init-frame", type=int, default=0,
                         help="Motion frame to RSI-initialize at (default 0).")
@@ -837,15 +714,7 @@ def main():
     parser.add_argument("--max-dev", type=float, default=2.2,
                         help="Safety clamp on |target - default_pose| per "
                              "joint, rad. 0 disables. Default 2.2.")
-    parser.add_argument("--legacy-continuous-efforts", action="store_true",
-                        help="Use pre-2026-07-28 continuous-limit efforts / "
-                             "action scale — REQUIRED for checkpoints trained "
-                             "before the saturation-effort knee-bend fix "
-                             "(bigrun/locoft1 lineage).")
     args = parser.parse_args()
-
-    if args.legacy_continuous_efforts:
-        use_legacy_efforts()
 
     kp = KP * float(args.kp_scale)
     kd = KD * float(args.kd_scale)
@@ -871,18 +740,6 @@ def main():
         print(f"Loading ONNX session from {args.onnx} ...", flush=True)
         onnx_actor = OnnxActor(args.onnx)
         print(f"  ONNX: {onnx_actor.describe()}", flush=True)
-
-    pt_actor = None
-    parity_logger: ParityLogger | None = None
-    if args.compare_pt is not None and not args.kinematic:
-        import torch  # deferred: not needed for ONNX-only rollouts
-        print(f"Loading .pt actor from {args.compare_pt} ...", flush=True)
-        pt_actor = load_pt_actor(args.compare_pt, args.device)
-        print("  .pt actor loaded.", flush=True)
-        parity_logger = ParityLogger(Path(args.parity_csv))
-        print(f"  Parity CSV: {parity_logger.csv_path}", flush=True)
-        print(f"  Parity threshold: max |a_pt - a_onnx|_inf < "
-              f"{args.parity_threshold:.1e}", flush=True)
 
     print(f"Loading motion from {args.motion} ...", flush=True)
     _all = load_motion_data(args.motion)
@@ -1121,22 +978,7 @@ def main():
         tokenizer_obs = build_tokenizer_obs(motion_data, motion_time, base_quat,
                                             motion_fps)
 
-        action_il_onnx = onnx_actor(proprioception, tokenizer_obs)
-
-        action_il_pt = None
-        if pt_actor is not None:
-            import torch
-            with torch.no_grad():
-                obs_t = torch.from_numpy(
-                    np.concatenate([tokenizer_obs, proprioception])
-                ).unsqueeze(0).to(args.device)
-                action_il_pt = pt_actor(obs_t).squeeze(0).cpu().numpy()
-            assert parity_logger is not None
-            parity_logger.log(step_count, sim_time, action_il_pt, action_il_onnx)
-
-        # In compare mode the .pt action drives the sim (deterministic
-        # reference rollout); otherwise ONNX drives.
-        action_il_drive = action_il_pt if action_il_pt is not None else action_il_onnx
+        action_il_drive = onnx_actor(proprioception, tokenizer_obs)
         # Training wrapper clips actions (action_clip_value=20.0); the clipped
         # action is also what enters the last_action history obs.
         action_il_drive = np.clip(action_il_drive, -ACTION_CLIP, ACTION_CLIP)
@@ -1195,12 +1037,8 @@ def main():
         if args.max_episode > 0 and episode_seconds >= args.max_episode:
             return f"reached --max-episode={args.max_episode:.1f}s"
         if step_count % 250 == 0:
-            extra = ""
-            if action_il_pt is not None:
-                extra = (f"  delta_inf="
-                         f"{float(np.max(np.abs(action_il_pt - action_il_onnx))):.2e}")
             print(f"[ep {episode_count}] step={step_count} sim={sim_time:.2f}s "
-                  f"frame={motion_frame}/{total_frames} h={pelvis_z:.3f}m{extra}",
+                  f"frame={motion_frame}/{total_frames} h={pelvis_z:.3f}m",
                   flush=True)
         return None
 
@@ -1208,9 +1046,6 @@ def main():
     print(f"Robot RSI-initialized from motion frame {init_frame}.", flush=True)
     print(f"Auto-reset triggers: pelvis_z < {args.fall_height:.2f} m, "
           f"or gravity_body[z] > {args.fall_tilt_cos:.2f}.", flush=True)
-    if pt_actor is not None:
-        print("Parity mode: .pt drives the sim, ONNX is a passive observer.",
-              flush=True)
     if not args.no_viewer:
         print("Press SPACE pause, R reset, N next clip, V toggle camera.\n",
               flush=True)
@@ -1336,13 +1171,6 @@ def main():
     if safety is not None:
         print("\n=== Safety limits ===", flush=True)
         print(safety.summary(), flush=True)
-
-    if parity_logger is not None:
-        passed, summary = parity_logger.summary(args.parity_threshold)
-        parity_logger.close()
-        print("\n=== Parity check (.pt vs ONNX) ===", flush=True)
-        print(summary, flush=True)
-        sys.exit(0 if passed else 1)
 
 
 if __name__ == "__main__":

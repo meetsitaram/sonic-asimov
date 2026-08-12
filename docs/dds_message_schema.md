@@ -233,6 +233,11 @@ also sets root pose/velocity — on hardware, start clips from a
 standing-idle first frame). Reset the obs history and `last_action`, and
 start the clip clock at 0.
 
+Heads-up on the bundled clips: bones-seed mocap begins with a **~2.5 s
+T-pose calibration ramp** (shoulder_roll ±90° at frame 0). Start playback
+at frame ≥ 75 (2.5 s @ 30 fps) for a natural mid-gait entry — the player
+does this by default via `--init-frame 75`.
+
 The eval harness terminates on `pelvis_z < 0.35 m` (Asimov stands ~0.63 m)
 or base tilt > ~72°; wire equivalent watchdogs into the deploy stack.
 

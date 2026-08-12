@@ -22,6 +22,11 @@ ARGS=("$@")
 if [[ ! " $* " =~ " --clip " ]]; then
     ARGS+=(--clip walk_forward_relax_001__A002)
 fi
+# bones-seed mocap begins with a ~2.5 s T-pose calibration ramp; skip it
+# by default so playback starts mid-relaxed-gait (frame 75 @ 30 fps).
+if [[ ! " $* " =~ " --init-frame " ]]; then
+    ARGS+=(--init-frame 75)
+fi
 
 exec .venv/bin/python scripts/eval_asimov_mujoco_onnx.py \
     --onnx models/locoft2_final_9800.onnx \

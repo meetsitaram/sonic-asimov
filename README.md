@@ -8,10 +8,12 @@ an install script. CPU-only, no GPU and no torch required.
 
 ## Kinematic reference vs SONIC (side by side)
 
-`walk_forward_relax_001__A002`, full 34 s clip — left: the reference motion
-played kinematically (poses written straight to the sim, no physics); right:
-the SONIC policy tracking that same reference under full physics (joint MAE
-0.132 rad, safety limits never engaged):
+`walk_forward_relax_001__A002` — left: the reference motion played
+kinematically (poses written straight to the sim, no physics); right: the
+SONIC policy tracking that same reference under full physics (joint MAE
+0.129 rad, safety limits never engaged). Playback starts at frame 75: the
+source mocap opens with a ~2.5 s T-pose calibration ramp that the player
+skips by default (`--init-frame 75`):
 
 ![Kinematic vs SONIC preview](media/relaxed_walk_preview.gif)
 
@@ -30,10 +32,10 @@ Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
 ```bash
 .venv/bin/python scripts/eval_asimov_mujoco_onnx.py --kinematic --no-viewer \
     --motion motions/asimov_relaxed_walk.pkl --clip walk_forward_relax_001__A002 \
-    --record media/relaxed_walk_kinematic.mp4
+    --init-frame 75 --record media/relaxed_walk_kinematic.mp4
 .venv/bin/python scripts/eval_asimov_mujoco_onnx.py --onnx models/locoft2_final_9800.onnx \
     --motion motions/asimov_relaxed_walk.pkl --clip walk_forward_relax_001__A002 \
-    --no-viewer --max-episode 35 --record media/relaxed_walk_sonic.mp4
+    --no-viewer --init-frame 75 --max-episode 35 --record media/relaxed_walk_sonic.mp4
 ```
 
 ## Quickstart
@@ -76,23 +78,14 @@ the reference convention is broken (see the "served DOF" note in the player).
 | `motions/asimov_relaxed_walk.pkl` | 24 relaxed-walk clips (`walk_forward_relax_*`), 30 fps, retargeted G1→Asimov. In-distribution for this policy. |
 | `assets/mjcf/asimov.xml` (+ `asimov_assets/`) | Asimov v1 MuJoCo model. |
 | `scripts/eval_asimov_mujoco_onnx.py` | The player: builds observations exactly as in training, runs the ONNX at 50 Hz, PD at 200 Hz. |
-| `scripts/export_asimov_onnx.py` | Reference: how the ONNX was exported from the .pt checkpoint (needs torch; not needed for playback). |
-| `tools/make_motion_pkl.py` | Provenance: how the motion PKL was extracted from the training corpus. |
 | `docs/dds_message_schema.md` | **Integration contract**: exact policy input/output layout + proposed DDS topics/IDL. |
 
-## Model lineage
+## Model
 
-`locoft2_final_9800` (2026-07-28): SONIC universal-token tracking policy,
-trained in IsaacLab on the Asimov loco2k corpus (2,173 locomotion clips
-retargeted from G1 bones-seed motions), warm-started after the
-**saturation-effort fix** — sim effort limits are the actuators' *peak*
-ratings, not continuous/thermal ones (with continuous limits the policy
-physically could not bend knees). The player's PD/effort tables match that
-training config verbatim; do not evaluate older (`bigrun`/`locoft1`)
-checkpoints without `--legacy-continuous-efforts`.
-
-ONNX↔checkpoint parity was gated at export (max action diff ~1e-6) and can
-be re-checked anytime with `--compare-pt <ckpt.pt>` (needs torch).
+SONIC universal-token tracking policy, trained on ~2k locomotion clips
+retargeted to Asimov from the bones-seed G1 motion dataset. The player's
+PD gains and effort limits match the training config verbatim, and
+ONNX↔checkpoint parity was gated at export time (max action diff ~1e-6).
 
 ## Integrating on the robot
 
