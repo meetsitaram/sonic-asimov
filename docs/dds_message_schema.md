@@ -233,10 +233,17 @@ also sets root pose/velocity — on hardware, start clips from a
 standing-idle first frame). Reset the obs history and `last_action`, and
 start the clip clock at 0.
 
-Heads-up on the bundled clips: bones-seed mocap begins with a **~2.5 s
-T-pose calibration ramp** (shoulder_roll ±90° at frame 0). Start playback
-at frame ≥ 75 (2.5 s @ 30 fps) for a natural mid-gait entry — the player
-does this by default via `--init-frame 75`.
+On-robot, the practical episode-start reference is the bundled
+**idle-stand loop** (`neutral_idle_loop_001__A074`, 7.1 s @ 30 fps): bring
+the robot up tracking the looped idle (the policy holds a stable stand,
+joint MAE ~0.12 rad in sim), then switch the reference stream to a motion
+clip. SONIC expects a reference at every tick — "no motion" is the idle
+loop, never a frozen or absent reference.
+
+Heads-up on the bundled walk clips: the `walk_forward_relax_*` mocap
+begins with a **~2.5 s T-pose calibration ramp** (shoulder_roll ±90° at
+frame 0) — start those at frame ≥ 75. The `Relaxed_walk_forward_001__A057`
+demo clip starts from rest; frame 70 skips its from-rest acceleration.
 
 The eval harness terminates on `pelvis_z < 0.35 m` (Asimov stands ~0.63 m)
 or base tilt > ~72°; wire equivalent watchdogs into the deploy stack.
