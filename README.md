@@ -73,7 +73,7 @@ the reference convention is broken (see the "served DOF" note in the player).
 |---|---|
 | `models/locoft2_final_9800.onnx` | Latest SONIC Asimov policy (fused g1-encoder → FSQ → decoder, single 1270-D input → 23-D action). |
 | `models/locoft2_final_config.yaml` | Resolved training config for that checkpoint (reference). |
-| `motions/asimov_relaxed_walk.pkl` | 26 relaxed-walk clips @ 30 fps, retargeted G1→Asimov: `Relaxed_walk_forward_001__A057` (+ mirror; the demo clip, starts from rest) and the `walk_forward_relax_*` family (note: those open with a ~2.5 s T-pose mocap-calibration ramp — play them with `--init-frame 75`). |
+| `motions/asimov_relaxed_walk.pkl` | 26 relaxed-walk clips @ 30 fps, retargeted G1→Asimov: `Relaxed_walk_forward_001__A057` (+ mirror; the demo clip — the play script starts it at frame 70, after the from-rest acceleration where the hands hang forward) and the `walk_forward_relax_*` family (those open with a ~2.5 s T-pose mocap-calibration ramp — play them with `--init-frame 75`). |
 | `assets/mjcf/asimov.xml` (+ `asimov_assets/`) | Asimov v1 MuJoCo model. |
 | `scripts/eval_asimov_mujoco_onnx.py` | The player: builds observations exactly as in training, runs the ONNX at 50 Hz, PD at 200 Hz. |
 | `docs/dds_message_schema.md` | **Integration contract**: exact policy input/output layout + proposed DDS topics/IDL. |

@@ -18,12 +18,17 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 ARGS=("$@")
-# Default: the relaxed-walk reference clip (starts from rest — no trim
-# needed). NOTE: the walk_forward_relax_* clips instead open with a ~2.5 s
-# T-pose calibration ramp from the source mocap — pass --init-frame 75
-# with those to start mid-gait.
+# Default: the relaxed-walk reference clip, started at frame 70 — the
+# clip's first ~2.3 s is the from-rest acceleration (hands held folded
+# forward, torso leaned in); by f70 the arms have dropped to a natural
+# hang and the gait is settled. NOTE: the walk_forward_relax_* clips
+# instead open with a ~2.5 s T-pose calibration ramp — pass
+# --init-frame 75 with those.
 if [[ ! " $* " =~ " --clip " ]]; then
     ARGS+=(--clip Relaxed_walk_forward_001__A057)
+    if [[ ! " $* " =~ " --init-frame " ]]; then
+        ARGS+=(--init-frame 70)
+    fi
 fi
 
 exec .venv/bin/python scripts/eval_asimov_mujoco_onnx.py \
