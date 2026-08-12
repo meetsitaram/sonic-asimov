@@ -18,14 +18,12 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 ARGS=("$@")
-# Default to the reference relaxed-walk clip unless the caller picked one.
+# Default: the relaxed-walk reference clip (starts from rest — no trim
+# needed). NOTE: the walk_forward_relax_* clips instead open with a ~2.5 s
+# T-pose calibration ramp from the source mocap — pass --init-frame 75
+# with those to start mid-gait.
 if [[ ! " $* " =~ " --clip " ]]; then
-    ARGS+=(--clip walk_forward_relax_001__A002)
-fi
-# bones-seed mocap begins with a ~2.5 s T-pose calibration ramp; skip it
-# by default so playback starts mid-relaxed-gait (frame 75 @ 30 fps).
-if [[ ! " $* " =~ " --init-frame " ]]; then
-    ARGS+=(--init-frame 75)
+    ARGS+=(--clip Relaxed_walk_forward_001__A057)
 fi
 
 exec .venv/bin/python scripts/eval_asimov_mujoco_onnx.py \

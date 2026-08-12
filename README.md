@@ -8,12 +8,10 @@ an install script. CPU-only, no GPU and no torch required.
 
 ## Kinematic reference vs SONIC (side by side)
 
-`walk_forward_relax_001__A002` — left: the reference motion played
-kinematically (poses written straight to the sim, no physics); right: the
-SONIC policy tracking that same reference under full physics (joint MAE
-0.129 rad, safety limits never engaged). Playback starts at frame 75: the
-source mocap opens with a ~2.5 s T-pose calibration ramp that the player
-skips by default (`--init-frame 75`):
+`Relaxed_walk_forward_001__A057` (14.8 s, starts from rest) — left: the
+reference motion played kinematically (poses written straight to the sim,
+no physics); right: the SONIC policy tracking that same reference under
+full physics (joint MAE 0.156 rad, no falls, safety limits never engaged):
 
 ![Kinematic vs SONIC preview](media/relaxed_walk_preview.gif)
 
@@ -31,11 +29,11 @@ Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
 
 ```bash
 .venv/bin/python scripts/eval_asimov_mujoco_onnx.py --kinematic --no-viewer \
-    --motion motions/asimov_relaxed_walk.pkl --clip walk_forward_relax_001__A002 \
-    --init-frame 75 --record media/relaxed_walk_kinematic.mp4
+    --motion motions/asimov_relaxed_walk.pkl --clip Relaxed_walk_forward_001__A057 \
+    --record media/relaxed_walk_kinematic.mp4
 .venv/bin/python scripts/eval_asimov_mujoco_onnx.py --onnx models/locoft2_final_9800.onnx \
-    --motion motions/asimov_relaxed_walk.pkl --clip walk_forward_relax_001__A002 \
-    --no-viewer --init-frame 75 --max-episode 35 --record media/relaxed_walk_sonic.mp4
+    --motion motions/asimov_relaxed_walk.pkl --clip Relaxed_walk_forward_001__A057 \
+    --no-viewer --max-episode 20 --record media/relaxed_walk_sonic.mp4
 ```
 
 ## Quickstart
@@ -48,7 +46,7 @@ Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
 Useful variants:
 
 ```bash
-./play_relaxed_walk.sh --clip impro                      # any of the 24 clips (substring match)
+./play_relaxed_walk.sh --clip impro                      # any of the 26 clips (substring match)
 ./play_relaxed_walk.sh --no-viewer --total-sim-seconds 20  # headless smoke test + metrics
 ./play_relaxed_walk.sh --show-forces                     # draw contact forces
 ./play_relaxed_walk.sh --kinematic                       # reference motion only, no physics/policy
@@ -75,7 +73,7 @@ the reference convention is broken (see the "served DOF" note in the player).
 |---|---|
 | `models/locoft2_final_9800.onnx` | Latest SONIC Asimov policy (fused g1-encoder → FSQ → decoder, single 1270-D input → 23-D action). |
 | `models/locoft2_final_config.yaml` | Resolved training config for that checkpoint (reference). |
-| `motions/asimov_relaxed_walk.pkl` | 24 relaxed-walk clips (`walk_forward_relax_*`), 30 fps, retargeted G1→Asimov. In-distribution for this policy. |
+| `motions/asimov_relaxed_walk.pkl` | 26 relaxed-walk clips @ 30 fps, retargeted G1→Asimov: `Relaxed_walk_forward_001__A057` (+ mirror; the demo clip, starts from rest) and the `walk_forward_relax_*` family (note: those open with a ~2.5 s T-pose mocap-calibration ramp — play them with `--init-frame 75`). |
 | `assets/mjcf/asimov.xml` (+ `asimov_assets/`) | Asimov v1 MuJoCo model. |
 | `scripts/eval_asimov_mujoco_onnx.py` | The player: builds observations exactly as in training, runs the ONNX at 50 Hz, PD at 200 Hz. |
 | `docs/dds_message_schema.md` | **Integration contract**: exact policy input/output layout + proposed DDS topics/IDL. |
