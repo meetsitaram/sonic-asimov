@@ -201,6 +201,21 @@ trained with — the sim clamps torque at these):
 | elbow | 40 | 2 | 36 | 0.225 |
 | wrist_yaw | 40 | 2 | 36 | 0.225 |
 
+**Safety limits (bare minimum, deploy-mirrored).** Two output-level clamps,
+applied *downstream* of the network (the `last_action` history in §3 must
+keep the training-convention ±20 clip, NOT these):
+
+```
+|action|                 <= 12      per element   (nominal walk peaks ~9.7)
+|q_target − q_default|   <= 2.2 rad per joint     (nominal walk peaks ~1.52)
+```
+
+The player applies both by default (`--max-action 12 --max-dev 2.2`, 0
+disables) and reports engagement counts at exit. They are sized to never
+engage in nominal tracking — **any engagement in normal operation is a
+fault signal** (policy blow-up, bad reference, or convention bug), so wire
+the counts into `PolicyStatus`-style telemetry.
+
 Deploy note (X2 lesson): keep **peak/saturation** limits in any sim, but
 size the *hardware* safety clamps from the continuous ratings — the driver
 may clamp lower than τ_sat for thermal safety without retraining, at some

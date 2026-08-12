@@ -19,11 +19,18 @@ Useful variants:
 ./play_relaxed_walk.sh --clip impro                      # any of the 24 clips (substring match)
 ./play_relaxed_walk.sh --no-viewer --total-sim-seconds 20  # headless smoke test + metrics
 ./play_relaxed_walk.sh --show-forces                     # draw contact forces
+./play_relaxed_walk.sh --kinematic                       # reference motion only, no physics/policy
 ```
 
 Viewer keys: `SPACE` pause · `R` reset · `N` next clip · `V` toggle
 tracking/free camera · arrow keys = 80 N push at the torso
 (front/back/left/right).
+
+Deploy-style output safety limits are ON by default — `--max-action 12`
+(action cap; training clip is ±20) and `--max-dev 2.2` (per-joint target
+deviation from default pose, rad). Both are sized to never engage in
+nominal walking (measured peaks: 9.7 / 1.52 rad); engagement counts print
+at exit, and a nonzero count is a fault signal. Pass `0` to disable.
 
 Every episode prints a tracking summary (survival seconds, joint MAE in rad,
 pelvis-height MAE). A healthy run tracks the walk at **joint MAE ≈ 0.17 rad**

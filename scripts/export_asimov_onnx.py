@@ -35,12 +35,12 @@ on a batch of random structured inputs; the file is only promoted to
 ``--output`` if max|onnx - pt| < ``--max-action-diff`` (default 1e-3 rad;
 observed ~1e-6).
 
-Usage (local, env_isaaclab python — NOT ``conda activate``):
+Usage (any python with torch installed — NOT needed for playback, the
+bundled ONNX in models/ is already exported and parity-gated):
 
-  ~/miniconda3/envs/env_isaaclab/bin/python \\
-      gear_sonic/scripts/export_asimov_onnx.py \\
-      --checkpoint out/asimov_bigrun_evals/last_2344.pt \\
-      --output out/asimov_bigrun_evals/last_2344_asimov.onnx
+  python scripts/export_asimov_onnx.py \\
+      --checkpoint <checkpoint.pt> \\
+      --output models/<name>.onnx
 """
 
 from __future__ import annotations

@@ -5,12 +5,12 @@ codebase_version: 1.0
 headless: true
 num_envs: 12288
 auto_load_latest: false
-checkpoint: /mnt/ckpt/sonic/asimov_locoft2/last.pt
+checkpoint: <training-node>/asimov_locoft2/last.pt
 project_name: TRL_Asimov_Track
 experiment_name: ${exp_base}_${exp_var}
 base_dir: logs_rl
 timestamp: ${now:%Y%m%d_%H%M%S}
-experiment_dir: /mnt/ckpt/sonic/asimov_locoft2
+experiment_dir: <training-node>/asimov_locoft2
 save_dir: ${experiment_dir}/.hydra
 force_flat_terrain: false
 use_wandb: true
@@ -28,7 +28,7 @@ eval_overrides:
 algo:
   trl:
     dataset_name: dummy
-    output_dir: /mnt/ckpt/sonic/asimov_locoft2
+    output_dir: <training-node>/asimov_locoft2
     learning_rate: ${algo.config.actor_learning_rate}
     num_total_batches: ${algo.config.num_learning_iterations}
     total_episodes: null
@@ -284,10 +284,10 @@ manager_env:
       _target_: gear_sonic.envs.manager_env.mdp.commands.TrackingCommandCfg
       asset_name: robot
       motion_lib_cfg:
-        motion_file: gear_sonic/data/motions/asimov_loco_2k.pkl
+        motion_file: <training-corpus>/asimov_loco_2k.pkl  # loco2k corpus; relaxed-walk subset ships in motions/
         smpl_motion_file: dummy
         asset:
-          assetRoot: gear_sonic/data/assets/robot_description/mjcf/
+          assetRoot: assets/mjcf/  # ships in this repo
           assetFileName: asimov.xml
           urdfFileName: ''
         extend_config: []

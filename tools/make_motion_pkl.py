@@ -8,9 +8,9 @@ MuJoCo player; keeps root_trans_offset / pose_aa / dof / root_rot / fps —
 `pose_aa` is REQUIRED: the served-DOF reference convention is derived
 from it, see the note in scripts/eval_asimov_mujoco_onnx.py).
 
-Run from the source repo (GR00T-WholeBodyControl):
+Run wherever the full corpus PKL is available:
     python tools/make_motion_pkl.py \
-        --corpus gear_sonic/data/motions/asimov_loco_2k.pkl \
+        --corpus <path-to>/asimov_loco_2k.pkl \
         --out motions/asimov_relaxed_walk.pkl
 """
 import argparse

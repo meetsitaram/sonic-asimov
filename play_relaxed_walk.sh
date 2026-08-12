@@ -5,6 +5,7 @@
 #   ./play_relaxed_walk.sh                 # default clip, viewer
 #   ./play_relaxed_walk.sh --clip impro    # any clip whose name contains "impro"
 #   ./play_relaxed_walk.sh --no-viewer --total-sim-seconds 20   # headless
+#   ./play_relaxed_walk.sh --kinematic     # reference motion only (no physics/policy)
 #
 # Viewer keys: SPACE pause | R reset | N next clip | V camera |
 #              arrow keys = 80 N push (front/back/left/right)

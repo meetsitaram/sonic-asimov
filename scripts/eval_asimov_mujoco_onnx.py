@@ -12,9 +12,8 @@ The fused ONNX takes a single 1270-D vector::
     actor_obs = [tokenizer_obs(520) | proprioception(750)]
 
 and returns a 23-D action in IsaacLab DOF order. Observation construction
-mirrors the training env exactly (see ``eval_x2_mujoco.py`` for the layout
-archaeology; dims here are the Asimov ones from the resolved config next to
-``out/asimov_bigrun_evals/last_2344.pt``):
+mirrors the training env exactly (dims from the resolved training config
+shipped at ``models/locoft2_final_config.yaml``):
 
     tokenizer (g1 encoder inputs, per-frame interleaved over 10 future frames):
         command_multi_future_nonflat   (10, 46)  jpos(23)+jvel(23), IL order
@@ -318,6 +317,59 @@ def use_legacy_efforts():
     KP, KD, EFFORT_LIMIT, ACTION_SCALE, DEFAULT_DOF = _build_arrays(
         JOINT_PARAMS_LEGACY
     )
+
+
+# ---------- Output safety layer (deploy-style, bare minimum) ----------
+class SafetyLimiter:
+    """Two deploy-style limits on the policy output before it drives the sim:
+
+      * action cap:  |action| <= max_action   (tighter than training's ±20)
+      * dev clamp:   |target - default_pose| <= max_dev  per joint (rad)
+
+    Applied downstream of the network only — the last_action history obs
+    keeps the training convention (±20 clip), exactly like the robot deploy
+    stack. Limits are sized to NEVER engage in nominal tracking; engagements
+    are counted and reported so a clean run proves the margins.
+    """
+
+    def __init__(self, max_action: float, max_dev: float):
+        self.max_action = float(max_action)
+        self.max_dev = float(max_dev)
+        self.ticks = 0
+        self.action_hits = 0
+        self.dev_hits = 0
+        self.worst_action = 0.0
+        self.worst_dev = 0.0
+
+    def cap_action(self, action: np.ndarray) -> np.ndarray:
+        self.ticks += 1
+        m = float(np.max(np.abs(action)))
+        self.worst_action = max(self.worst_action, m)
+        if m > self.max_action:
+            self.action_hits += 1
+        return np.clip(action, -self.max_action, self.max_action)
+
+    def clamp_target(self, target: np.ndarray) -> np.ndarray:
+        dev = target - DEFAULT_DOF
+        m = float(np.max(np.abs(dev)))
+        self.worst_dev = max(self.worst_dev, m)
+        if m > self.max_dev:
+            self.dev_hits += 1
+        return DEFAULT_DOF + np.clip(dev, -self.max_dev, self.max_dev)
+
+    def summary(self) -> str:
+        n = max(self.ticks, 1)
+        clean = self.action_hits + self.dev_hits == 0
+        return "\n".join([
+            f"  Action cap  (|a| <= {self.max_action:g}):      "
+            f"{self.action_hits} ticks ({100.0 * self.action_hits / n:.2f}%), "
+            f"worst |a| {self.worst_action:.3f}",
+            f"  Dev clamp   (|q*-q0| <= {self.max_dev:g} rad): "
+            f"{self.dev_hits} ticks ({100.0 * self.dev_hits / n:.2f}%), "
+            f"worst dev {self.worst_dev:.3f} rad",
+            f"  Verdict:    "
+            f"{'CLEAN (limits never engaged)' if clean else 'ENGAGED — inspect before deploy'}",
+        ])
 
 
 # ---------- Actors ----------
@@ -672,8 +724,13 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--onnx", required=True,
-                        help="Fused Asimov ONNX (export_asimov_onnx.py output).")
+    parser.add_argument("--onnx", default=None,
+                        help="Fused Asimov ONNX (export_asimov_onnx.py output). "
+                             "Required unless --kinematic.")
+    parser.add_argument("--kinematic", action="store_true",
+                        help="Kinematic reference playback: pose the robot "
+                             "directly from the clip frames (no physics, no "
+                             "policy). Viewer only.")
     parser.add_argument("--motion", required=True, help="Reference motion PKL.")
     parser.add_argument("--clip", default=None,
                         help="Only play clips whose name CONTAINS this substring "
@@ -725,6 +782,13 @@ def main():
                              "= hardware-characterized gains verbatim).")
     parser.add_argument("--kd-scale", type=float, default=1.0,
                         help="Global multiplier on deployed KD.")
+    parser.add_argument("--max-action", type=float, default=12.0,
+                        help="Safety cap on |action| (deploy-style, applied "
+                             "downstream of the network; training clip is 20). "
+                             "0 disables. Default 12.")
+    parser.add_argument("--max-dev", type=float, default=2.2,
+                        help="Safety clamp on |target - default_pose| per "
+                             "joint, rad. 0 disables. Default 2.2.")
     parser.add_argument("--legacy-continuous-efforts", action="store_true",
                         help="Use pre-2026-07-28 continuous-limit efforts / "
                              "action scale — REQUIRED for checkpoints trained "
@@ -738,13 +802,29 @@ def main():
     kp = KP * float(args.kp_scale)
     kd = KD * float(args.kd_scale)
 
-    print(f"Loading ONNX session from {args.onnx} ...", flush=True)
-    onnx_actor = OnnxActor(args.onnx)
-    print(f"  ONNX: {onnx_actor.describe()}", flush=True)
+    safety = None
+    if args.max_action > 0 or args.max_dev > 0:
+        safety = SafetyLimiter(
+            args.max_action if args.max_action > 0 else float("inf"),
+            args.max_dev if args.max_dev > 0 else float("inf"),
+        )
+        print(f"Safety limits: |action| <= {safety.max_action:g}, "
+              f"|target - default| <= {safety.max_dev:g} rad", flush=True)
+
+    if args.kinematic and args.no_viewer:
+        parser.error("--kinematic needs the viewer (drop --no-viewer)")
+    if not args.kinematic and args.onnx is None:
+        parser.error("--onnx is required unless --kinematic")
+
+    onnx_actor = None
+    if not args.kinematic:
+        print(f"Loading ONNX session from {args.onnx} ...", flush=True)
+        onnx_actor = OnnxActor(args.onnx)
+        print(f"  ONNX: {onnx_actor.describe()}", flush=True)
 
     pt_actor = None
     parity_logger: ParityLogger | None = None
-    if args.compare_pt is not None:
+    if args.compare_pt is not None and not args.kinematic:
         import torch  # deferred: not needed for ONNX-only rollouts
         print(f"Loading .pt actor from {args.compare_pt} ...", flush=True)
         pt_actor = load_pt_actor(args.compare_pt, args.device)
@@ -809,6 +889,79 @@ def main():
               f"{total_frames / motion_fps:.1f}s) ===", flush=True)
 
     _load_clip(0)
+
+    # ---- Kinematic playback mode: pose from the clip, no physics/policy ----
+    if args.kinematic:
+        kin = {"paused": False, "frame": float(init_frame), "played": 0,
+               "clip": 0}
+
+        def _kin_pose(f: int) -> None:
+            m = _m(motion_data)
+            mj_data.qpos[0:3] = np.asarray(m["root_trans_offset"][f])
+            q = np.asarray(m["root_rot"][f])  # xyzw
+            mj_data.qpos[3:7] = [q[3], q[0], q[1], q[2]]
+            # `dof` is in the MJCF qpos convention — passes through untouched.
+            mj_data.qpos[7:7 + NUM_DOFS] = np.asarray(m["dof"][f])
+            mj_data.qvel[:] = 0
+            mujoco.mj_forward(mj_model, mj_data)
+
+        def _kin_next_clip() -> None:
+            kin["clip"] = (kin["clip"] + 1) % n_clips
+            _load_clip(kin["clip"])
+            kin["frame"] = float(init_frame)
+
+        def kin_key_callback(keycode):
+            import glfw
+            if keycode == glfw.KEY_SPACE:
+                kin["paused"] = not kin["paused"]
+                print("Paused" if kin["paused"] else "Resumed", flush=True)
+            elif keycode == glfw.KEY_R:
+                kin["frame"] = float(init_frame)
+            elif keycode == glfw.KEY_N:
+                _kin_next_clip()
+            elif keycode == glfw.KEY_V:
+                if viewer.cam.type == mujoco.mjtCamera.mjCAMERA_TRACKING:
+                    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                else:
+                    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+                    viewer.cam.trackbodyid = pelvis_id
+
+        print("\n=== Kinematic reference playback (no physics, no policy) ===",
+              flush=True)
+        print("Press SPACE pause, R restart clip, N next clip, V toggle camera.\n",
+              flush=True)
+        with mujoco.viewer.launch_passive(
+            mj_model, mj_data,
+            key_callback=kin_key_callback,
+            show_left_ui=False, show_right_ui=False,
+        ) as viewer:
+            viewer.cam.azimuth = 120
+            viewer.cam.elevation = -20
+            viewer.cam.distance = 2.5
+            viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            viewer.cam.trackbodyid = pelvis_id
+            while viewer.is_running():
+                if kin["paused"]:
+                    viewer.sync()
+                    time.sleep(0.02)
+                    continue
+                _kin_pose(int(kin["frame"]) % total_frames)
+                viewer.sync()
+                time.sleep(1.0 / (motion_fps * max(args.speed, 1e-6)))
+                kin["frame"] += 1.0
+                if kin["frame"] >= total_frames:
+                    kin["played"] += 1
+                    if n_clips > 1:
+                        if not args.loop_clips and kin["played"] >= n_clips:
+                            print(f"  [end] all {n_clips} clips played once "
+                                  f"(pass --loop-clips to cycle), exiting.",
+                                  flush=True)
+                            break
+                        _kin_next_clip()
+                    else:
+                        kin["frame"] = float(init_frame)
+        print("Viewer closed.")
+        return
 
     prop_buf = ProprioceptionBuffer()
     meter = TrackingMeter()
@@ -919,7 +1072,12 @@ def main():
 
         action_mj = action_il_drive[MJ_TO_IL_DOF]
         last_action_mj = action_mj.astype(np.float32).copy()
-        target_pos = DEFAULT_DOF + action_mj * ACTION_SCALE
+        # Deploy-style safety limits (downstream of the obs history on
+        # purpose — the network keeps seeing the training-convention action).
+        action_safe = safety.cap_action(action_mj) if safety else action_mj
+        target_pos = DEFAULT_DOF + action_safe * ACTION_SCALE
+        if safety:
+            target_pos = safety.clamp_target(target_pos)
 
         # Manual push (keys 1-4): world-frame force rotated by current pelvis
         # heading so "front" is always robot-forward. Applied at the torso
@@ -1098,6 +1256,10 @@ def main():
 
     print("\n=== Tracking summary ===", flush=True)
     print(meter.summary(), flush=True)
+
+    if safety is not None:
+        print("\n=== Safety limits ===", flush=True)
+        print(safety.summary(), flush=True)
 
     if parity_logger is not None:
         passed, summary = parity_logger.summary(args.parity_threshold)
