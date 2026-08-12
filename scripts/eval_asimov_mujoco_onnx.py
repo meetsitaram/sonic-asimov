@@ -372,6 +372,49 @@ class SafetyLimiter:
         ])
 
 
+# ---------- Offscreen video recorder ----------
+class VideoRecorder:
+    """Offscreen MuJoCo render piped to ffmpeg (H.264 mp4).
+
+    Uses the same tracking-camera framing as the interactive viewer. Needs
+    ``ffmpeg`` on PATH; headless GL (set ``MUJOCO_GL=egl`` if there is no
+    display). Recording is optional — nothing else depends on it.
+    """
+
+    def __init__(self, path: str, model, track_body_id: int, fps: float,
+                 width: int = 960, height: int = 720):
+        import shutil
+        import subprocess
+        if shutil.which("ffmpeg") is None:
+            raise SystemExit("--record needs ffmpeg on PATH")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.renderer = mujoco.Renderer(model, height=height, width=width)
+        self.cam = mujoco.MjvCamera()
+        self.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        self.cam.trackbodyid = track_body_id
+        self.cam.azimuth, self.cam.elevation, self.cam.distance = 120, -20, 2.5
+        self.frames = 0
+        self.path = path
+        self.proc = subprocess.Popen(
+            ["ffmpeg", "-y", "-loglevel", "error",
+             "-f", "rawvideo", "-pix_fmt", "rgb24",
+             "-s", f"{width}x{height}", "-r", f"{fps}", "-i", "-",
+             "-an", "-vcodec", "libx264", "-pix_fmt", "yuv420p", "-crf", "20",
+             path],
+            stdin=subprocess.PIPE,
+        )
+
+    def capture(self, data) -> None:
+        self.renderer.update_scene(data, camera=self.cam)
+        self.proc.stdin.write(self.renderer.render().tobytes())
+        self.frames += 1
+
+    def close(self) -> None:
+        self.proc.stdin.close()
+        self.proc.wait()
+        print(f"  [record] wrote {self.frames} frames -> {self.path}", flush=True)
+
+
 # ---------- Actors ----------
 class OnnxActor:
     """Thin wrapper around the fused Asimov ONNX session.
@@ -730,7 +773,12 @@ def main():
     parser.add_argument("--kinematic", action="store_true",
                         help="Kinematic reference playback: pose the robot "
                              "directly from the clip frames (no physics, no "
-                             "policy). Viewer only.")
+                             "policy). Viewer, or offscreen with --record.")
+    parser.add_argument("--record", default=None, metavar="OUT.mp4",
+                        help="Record an offscreen video (implies no realtime "
+                             "pacing; combine with --no-viewer). Policy mode "
+                             "records at 25 fps, kinematic at the clip fps. "
+                             "Needs ffmpeg on PATH.")
     parser.add_argument("--motion", required=True, help="Reference motion PKL.")
     parser.add_argument("--clip", default=None,
                         help="Only play clips whose name CONTAINS this substring "
@@ -811,8 +859,10 @@ def main():
         print(f"Safety limits: |action| <= {safety.max_action:g}, "
               f"|target - default| <= {safety.max_dev:g} rad", flush=True)
 
-    if args.kinematic and args.no_viewer:
-        parser.error("--kinematic needs the viewer (drop --no-viewer)")
+    if args.record and not args.no_viewer:
+        parser.error("--record requires --no-viewer (offscreen render)")
+    if args.kinematic and args.no_viewer and not args.record:
+        parser.error("--kinematic needs the viewer (or --record for offscreen)")
     if not args.kinematic and args.onnx is None:
         parser.error("--onnx is required unless --kinematic")
 
@@ -838,7 +888,10 @@ def main():
     _all = load_motion_data(args.motion)
     clip_names = list(_all.keys())
     if args.clip:
-        clip_names = [k for k in clip_names if args.clip.lower() in k.lower()]
+        if args.clip in clip_names:  # exact key match wins over substring
+            clip_names = [args.clip]
+        else:
+            clip_names = [k for k in clip_names if args.clip.lower() in k.lower()]
         if not clip_names:
             raise SystemExit(f"--clip '{args.clip}' matched no clips in {args.motion}")
     clips = [{k: _all[k]} for k in clip_names]
@@ -890,6 +943,12 @@ def main():
 
     _load_clip(0)
 
+    recorder = None
+    if args.record:
+        rec_fps = motion_fps if args.kinematic else 25.0
+        recorder = VideoRecorder(args.record, mj_model, pelvis_id, rec_fps)
+        print(f"Recording -> {args.record} @ {rec_fps:g} fps", flush=True)
+
     # ---- Kinematic playback mode: pose from the clip, no physics/policy ----
     if args.kinematic:
         kin = {"paused": False, "frame": float(init_frame), "played": 0,
@@ -928,6 +987,18 @@ def main():
 
         print("\n=== Kinematic reference playback (no physics, no policy) ===",
               flush=True)
+
+        if recorder is not None:
+            # Offscreen: one pass over the selected clips at clip fps.
+            for ci in range(n_clips):
+                if ci > 0:
+                    _kin_next_clip()
+                for f in range(init_frame, total_frames):
+                    _kin_pose(f)
+                    recorder.capture(mj_data)
+            recorder.close()
+            return
+
         print("Press SPACE pause, R restart clip, N next clip, V toggle camera.\n",
               flush=True)
         with mujoco.viewer.launch_passive(
@@ -1162,6 +1233,9 @@ def main():
             # consumes no sim time (keeps --total-sim-seconds accounting exact).
             if reason != "motion_end":
                 cumulative_sim_seconds += CONTROL_DT
+                # 50 Hz control -> capture every 2nd tick = 25 fps video.
+                if recorder is not None and step_count % 2 == 0:
+                    recorder.capture(mj_data)
             if (args.total_sim_seconds > 0
                     and cumulative_sim_seconds >= args.total_sim_seconds):
                 print(f"  [end] cumulative sim time {cumulative_sim_seconds:.2f}s "
@@ -1180,6 +1254,8 @@ def main():
                         print(f"  [end] all {n_clips} clips played once "
                               f"(pass --loop-clips to cycle), exiting.", flush=True)
                         exit_requested = True
+        if recorder is not None:
+            recorder.close()
     else:
         def key_callback(keycode):
             nonlocal paused

@@ -6,6 +6,31 @@ relaxed-walk reference motion. Everything needed is in this repo: policy
 (ONNX), robot model (MJCF + meshes), reference motions, player script, and
 an install script. CPU-only, no GPU and no torch required.
 
+## Kinematic reference vs SONIC (side by side)
+
+`walk_forward_relax_001__A002`, full 34 s clip — left: the reference motion
+played kinematically (poses written straight to the sim, no physics); right:
+the SONIC policy tracking that same reference under full physics (joint MAE
+0.132 rad, safety limits never engaged):
+
+![Kinematic vs SONIC preview](media/relaxed_walk_preview.gif)
+
+*(12 s preview — full-length videos:
+[side-by-side](media/relaxed_walk_side_by_side.mp4) ·
+[kinematic](media/relaxed_walk_kinematic.mp4) ·
+[SONIC](media/relaxed_walk_sonic.mp4))*
+
+Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
+
+```bash
+.venv/bin/python scripts/eval_asimov_mujoco_onnx.py --kinematic --no-viewer \
+    --motion motions/asimov_relaxed_walk.pkl --clip walk_forward_relax_001__A002 \
+    --record media/relaxed_walk_kinematic.mp4
+.venv/bin/python scripts/eval_asimov_mujoco_onnx.py --onnx models/locoft2_final_9800.onnx \
+    --motion motions/asimov_relaxed_walk.pkl --clip walk_forward_relax_001__A002 \
+    --no-viewer --max-episode 35 --record media/relaxed_walk_sonic.mp4
+```
+
 ## Quickstart
 
 ```bash
