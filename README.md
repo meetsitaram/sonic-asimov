@@ -20,6 +20,10 @@ the SONIC policy tracking that same reference under full physics (joint MAE
 [kinematic](media/relaxed_walk_kinematic.mp4) ·
 [SONIC](media/relaxed_walk_sonic.mp4))*
 
+> `media/` is tracked with **git LFS** — install `git-lfs` before cloning to
+> get the videos. Without it you get harmless pointer stubs; everything else
+> (model, motions, scripts) is plain git and works regardless.
+
 Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
 
 ```bash
