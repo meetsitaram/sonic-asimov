@@ -33,5 +33,5 @@ fi
 
 exec .venv/bin/python scripts/eval_asimov_mujoco_onnx.py \
     --onnx models/locoft2_final_9800.onnx \
-    --motion motions/asimov_relaxed_walk.pkl \
+    --motion motions/asimov_motions.pkl \
     "${ARGS[@]}"
