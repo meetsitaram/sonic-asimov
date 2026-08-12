@@ -46,7 +46,7 @@ Reproduce with the player's `--record` flag (needs ffmpeg on PATH):
 Useful variants:
 
 ```bash
-./play_relaxed_walk.sh --idle                            # idle-stand loop (stand in place)
+./play_idle_stand.sh                                     # idle-stand loop (stand in place)
 ./play_relaxed_walk.sh --clip impro                      # any of the 26 walk clips (substring match)
 ./play_relaxed_walk.sh --no-viewer --total-sim-seconds 20  # headless smoke test + metrics
 ./play_relaxed_walk.sh --show-forces                     # draw contact forces
