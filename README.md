@@ -95,3 +95,15 @@ with the observation vector specified there, and send the resulting 23
 target joint positions to a motor-side PD loop with the kp/kd table from the
 doc. The policy needs **no odometry** — only gyro, gravity direction, joint
 pos/vel, its own last action, and the reference-clip playback clock.
+
+## Motion data attribution
+
+All motion clips in this repository (reference motions, demo dances,
+walks, and derived files) originate from the **BONES-SEED** motion-capture
+dataset by **Bones Studio**, publicly released alongside NVIDIA GEAR-SONIC
+(retargeted here to this robot). Their use is governed by the
+**BONES-SEED license** — obtain the dataset and its license terms from
+the official release (Hugging Face: BONES-SEED, Bones Studio) before
+redistributing or using these motions beyond what that license permits.
+This repo redistributes only retargeted derivatives for research/demo
+reproduction of the accompanying reports.
